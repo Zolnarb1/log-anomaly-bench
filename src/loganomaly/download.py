@@ -1,32 +1,51 @@
 """Download Loghub log datasets.
 
 Usage:
-    python -m loganomaly.download --dataset BGL_2k
+    python -m loganomaly.download --dataset BGL_2k   # 2,000-line sample (GitHub), for quick tests
+    python -m loganomaly.download --dataset BGL      # full dataset, ~4.7M lines (Zenodo, 57 MB zip)
 """
 import argparse
+import shutil
 import urllib.request
+import zipfile
 
 from loganomaly import RAW_DIR
 
-# Loghub hosts small 2k-line samples on GitHub (good for development).
-# Full datasets live on Zenodo; they are added once the pipeline works on the samples.
+# name -> (url, file inside the zip or None if the URL is the log itself)
 DATASETS = {
-    "BGL_2k": "https://raw.githubusercontent.com/logpai/loghub/master/BGL/BGL_2k.log",
+    "BGL_2k": ("https://raw.githubusercontent.com/logpai/loghub/master/BGL/BGL_2k.log", None),
+    "BGL": ("https://zenodo.org/records/8196385/files/BGL.zip?download=1", "BGL.log"),
 }
+
+
+def _progress(blocks, block_size, total):
+    if total > 0:
+        done = min(blocks * block_size / total, 1)
+        print(f"\r  {done:6.1%} of {total / 1e6:.0f} MB", end="", flush=True)
 
 
 def download(name: str) -> None:
     if name not in DATASETS:
         raise SystemExit(f"Unknown dataset {name!r}. Choose from: {', '.join(DATASETS)}")
+    url, member = DATASETS[name]
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     target = RAW_DIR / f"{name}.log"
     if target.exists():
         print(f"Already downloaded: {target}")
         return
-    print(f"Downloading {DATASETS[name]} ...")
-    urllib.request.urlretrieve(DATASETS[name], target)
+
+    print(f"Downloading {url}")
+    if member is None:
+        urllib.request.urlretrieve(url, target, _progress)
+    else:
+        archive = RAW_DIR / f"{name}.zip"
+        urllib.request.urlretrieve(url, archive, _progress)
+        print("\n  extracting ...")
+        with zipfile.ZipFile(archive) as zf, zf.open(member) as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        archive.unlink()
     n_lines = sum(1 for _ in target.open(encoding="utf-8", errors="replace"))
-    print(f"Saved {n_lines:,} lines to {target}")
+    print(f"\nSaved {n_lines:,} lines to {target}")
 
 
 if __name__ == "__main__":
